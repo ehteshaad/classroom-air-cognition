@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Classroom Air & Cognition | Research Dashboard</title>
+<style>
+:root{--navy:#102a43;--blue:#176b87;--teal:#2a9d8f;--ink:#172b4d;--muted:#627d98;--line:#d9e2ec;--paper:#f4f7fb;--white:#fff}
+*{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+header{background:linear-gradient(120deg,#102a43,#176b87);color:white;padding:22px}header div,main{max-width:1100px;margin:auto}
+main{padding:22px 14px 50px}.card{background:white;border:1px solid var(--line);border-radius:16px;padding:20px;margin-bottom:16px}
+h1{margin:0;font-size:1.6rem}h2{margin:0 0 10px;font-size:1.15rem}.muted{color:var(--muted)}label{display:block;font-weight:650;margin:10px 0 5px}
+input{width:100%;max-width:420px;padding:11px;border:1px solid #bcccdc;border-radius:9px;font:inherit}
+button{padding:10px 14px;border:0;border-radius:9px;background:var(--blue);color:white;font:inherit;font-weight:700;cursor:pointer;margin:8px 8px 0 0}
+button.secondary{background:#eaf0f6;color:var(--ink)}button:disabled{opacity:.5}
+.row{display:flex;flex-wrap:wrap;gap:10px}.metric{background:#f4f8fb;border-radius:10px;padding:12px;min-width:140px;flex:1}.metric span{display:block;color:var(--muted);font-size:.82rem}.metric strong{font-size:1.3rem}
+table{width:100%;border-collapse:collapse;font-size:.9rem}th,td{text-align:left;border-bottom:1px solid #e5edf4;padding:9px;white-space:nowrap}th{background:#f4f8fb}
+.tablewrap{overflow:auto}#status{padding:10px 12px;border-radius:9px;background:#eef8fb;margin:10px 0}#app[hidden],#login[hidden]{display:none}
+</style>
+</head>
+<body>
+<header><div><div style="opacity:.8;font-size:.8rem;letter-spacing:.1em">RESEARCHER ACCESS</div><h1>Classroom Air & Cognition</h1><div>Private assessment dashboard</div></div></header>
+<main>
+<section class="card" id="login">
+<h2>Researcher sign in</h2><p class="muted">Use an account created by the project administrator in Supabase. Public sign-up is intentionally not provided.</p>
+<label for="email">Email</label><input id="email" type="email" autocomplete="username">
+<label for="password">Password</label><input id="password" type="password" autocomplete="current-password">
+<div><button id="signIn">Sign in</button></div><div id="loginStatus" role="status"></div>
+</section>
+<section id="app" hidden>
+<div class="card"><div class="row" style="align-items:center;justify-content:space-between"><div><h2>Study overview</h2><div class="muted" id="lastUpdated">Not loaded yet</div></div><div><button id="refresh">Refresh data</button><button class="secondary" id="signOut">Sign out</button></div></div>
+<div class="row" style="margin-top:14px"><div class="metric"><span>Assessment submissions</span><strong id="total">—</strong></div><div class="metric"><span>Unique study IDs</span><strong id="participants">—</strong></div><div class="metric"><span>Pre-class</span><strong id="pre">—</strong></div><div class="metric"><span>Post-class</span><strong id="post">—</strong></div></div>
+<div id="status" role="status">Sign in to load records.</div>
+<div><button id="downloadSessions">Download session CSV</button><button id="downloadPvt" class="secondary">Download PVT trials CSV</button><button id="downloadStroop" class="secondary">Download Stroop trials CSV</button></div>
+</div>
+<div class="card"><h2>Recent submissions</h2><p class="muted">Newest first. Trial-level detail is available in the separate downloads.</p><div class="tablewrap"><table><thead><tr><th>Study ID</th><th>Date</th><th>Classroom</th><th>Time point</th><th>PVT trials</th><th>Stroop trials</th><th>Submitted</th></tr></thead><tbody id="records"></tbody></table></div></div>
+</section>
+</main>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script><script src="./config.js"></script>
+<script>
+(() => {
+  const $=id=>document.getElementById(id); let client=null, rows=[];
+  const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  function csv(v){const s=String(v??'');return '"'+s.replace(/"/g,'""')+'"';}
+  function download(name,content){const blob=new Blob([content],{type:'text/csv;charset=utf-8;'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=name;document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);}
+  function csvFile(name,headers,records){download(name,[headers.map(csv).join(','),...records.map(r=>headers.map(h=>csv(r[h])).join(','))].join('\r\n'));}
+  function setStatus(msg,ok=false){$('status').textContent=msg;$('status').style.background=ok?'#e8f5f3':'#eef8fb';}
+  async function load(){
+    setStatus('Loading records…');
+    const {data,error}=await client.from('assessment_sessions').select('*').order('inserted_at',{ascending:false}).limit(5000);
+    if(error){setStatus('Could not load records: '+error.message);return;}
+    rows=data||[]; const ids=new Set(rows.map(r=>r.participant_id));
+    $('total').textContent=rows.length;$('participants').textContent=ids.size;
+    $('pre').textContent=rows.filter(r=>r.assessment==='pre').length;$('post').textContent=rows.filter(r=>r.assessment==='post').length;
+    $('lastUpdated').textContent='Last refreshed: '+new Date().toLocaleString();
+    $('records').innerHTML=rows.slice(0,100).map(r=>`<tr><td>${esc(r.participant_id)}</td><td>${esc(r.assessment_date)}</td><td>${esc(r.classroom)}</td><td>${esc(r.assessment)}</td><td>${Array.isArray(r.pvt?.trials)?r.pvt.trials.length:0}</td><td>${Array.isArray(r.stroop?.trials)?r.stroop.trials.length:0}</td><td>${esc(r.inserted_at)}</td></tr>`).join('');
+    setStatus('Loaded '+rows.length+' records. Dashboard access is restricted to signed-in researchers.',true);
+  }
+  $('signIn').addEventListener('click',async()=>{
+    const cfg=window.CLASSROOM_APP_CONFIG||{};
+    if(!cfg.supabaseUrl||!cfg.supabasePublishableKey||cfg.supabaseUrl.includes('YOUR_PROJECT')){$('loginStatus').textContent='Configure config.js first.';return;}
+    client=window.supabase.createClient(cfg.supabaseUrl,cfg.supabasePublishableKey);
+    $('signIn').disabled=true;$('loginStatus').textContent='Signing in…';
+    const {error}=await client.auth.signInWithPassword({email:$('email').value.trim(),password:$('password').value});
+    $('signIn').disabled=false;
+    if(error){$('loginStatus').textContent='Sign-in failed: '+error.message;return;}
+    $('login').hidden=true;$('app').hidden=false;await load();
+  });
+  $('refresh').addEventListener('click',load);
+  $('signOut').addEventListener('click',async()=>{await client.auth.signOut();rows=[];$('app').hidden=true;$('login').hidden=false;$('password').value='';});
+  $('downloadSessions').addEventListener('click',()=>{
+    const headers=['id','participant_id','classroom','assessment_date','assessment','start_time','session_code','client_started_at','completed_at','inserted_at','questionnaire','pvt','stroop','schema_version'];
+    csvFile('classroom_assessment_sessions.csv',headers,rows.map(r=>({...r,questionnaire:JSON.stringify(r.questionnaire),pvt:JSON.stringify(r.pvt),stroop:JSON.stringify(r.stroop)})));
+  });
+  $('downloadPvt').addEventListener('click',()=>{
+    const out=[];rows.forEach(r=>(r.pvt?.trials||[]).forEach(t=>out.push({session_id:r.id,participant_id:r.participant_id,classroom:r.classroom,date:r.assessment_date,assessment:r.assessment,...t})));
+    const headers=['session_id','participant_id','classroom','date','assessment','trial','rtMs','outcome','timestamp'];
+    csvFile('classroom_pvt_trials.csv',headers,out);
+  });
+  $('downloadStroop').addEventListener('click',()=>{
+    const out=[];rows.forEach(r=>(r.stroop?.trials||[]).forEach(t=>out.push({session_id:r.id,participant_id:r.participant_id,classroom:r.classroom,date:r.assessment_date,assessment:r.assessment,...t})));
+    const headers=['session_id','participant_id','classroom','date','assessment','trial','word','ink','congruency','response','rtMs','correct','timestamp'];
+    csvFile('classroom_stroop_trials.csv',headers,out);
+  });
+})();
+</script>
+</body></html>
